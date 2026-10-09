@@ -10,9 +10,16 @@ from fastapi.middleware.cors import CORSMiddleware
 # Ensure parent directory is in sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from detector import PedestrianDetector
-from danger_zone import DangerZoneManager
+from danger_zone import DangerZone
 from utils.drawing import draw_danger_zones, draw_detections, draw_telemetry_hud
+
+# Import ONNX detector first for lightweight Vercel serverless footprint
+try:
+    from utils.onnx_detector import ONNXPedestrianDetector
+    USE_ONNX = True
+except Exception:
+    from detector import PedestrianDetector
+    USE_ONNX = False
 
 app = FastAPI(title="AI Pedestrian Warning System API")
 
@@ -25,30 +32,32 @@ app.add_middleware(
 )
 
 # Global lazy instances
-detector = None
-danger_zone_mgr = None
+detector_instance = None
 
 def get_detector():
-    global detector
-    if detector is None:
-        detector = PedestrianDetector()
-    return detector
-
-def get_danger_zone():
-    global danger_zone_mgr
-    if danger_zone_mgr is None:
-        danger_zone_mgr = DangerZoneManager()
-    return danger_zone_mgr
+    global detector_instance
+    if detector_instance is None:
+        if USE_ONNX:
+            onnx_path = os.path.join(os.path.dirname(__file__), "..", "yolov8n.onnx")
+            detector_instance = ONNXPedestrianDetector(model_path=onnx_path)
+        else:
+            detector_instance = PedestrianDetector()
+    return detector_instance
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "system": "AI Pedestrian & Heavy-Vehicle Blind-Zone Warning System", "version": "1.0.0"}
+    return {
+        "status": "ok",
+        "system": "AI Pedestrian & Heavy-Vehicle Blind-Zone Warning System",
+        "backend": "ONNX Runtime (Serverless)" if USE_ONNX else "PyTorch",
+        "version": "1.0.0"
+    }
 
 @app.post("/api/detect")
 async def detect_pedestrians(
     file: UploadFile = File(...),
     confidence: float = Form(0.50),
-    preset: str = Form("front_blindspot")
+    preset: str = Form("Front Blind Spot")
 ):
     try:
         contents = await file.read()
@@ -58,14 +67,12 @@ async def detect_pedestrians(
         if frame is None:
             return JSONResponse({"error": "Invalid image file uploaded."}, status_code=400)
 
-        dz_mgr = get_danger_zone()
+        dz = DangerZone(preset_name=preset)
         det = get_detector()
-        
-        dz_mgr.set_preset(preset)
         det.set_confidence(confidence)
 
-        polygon = dz_mgr.get_zone_for_frame(frame.shape)
-        detections, is_danger = det.detect(frame, dz_mgr)
+        polygon = dz.get_pixel_polygon(frame.shape)
+        detections, is_danger = det.detect(frame, dz)
 
         # Draw overlays
         annotated_frame = draw_danger_zones(frame.copy(), polygon, is_danger)
@@ -204,9 +211,9 @@ def index():
 
                     <label for="presetSelect">Blind Zone Preset</label>
                     <select id="presetSelect">
-                        <option value="front_blindspot">Front Blind Spot (A-Pillar)</option>
-                        <option value="side_right">Right Side Mirror Zone</option>
-                        <option value="rear_wide">Rear Wide Danger Zone</option>
+                        <option value="Front Blind Spot">Front Blind Spot (A-Pillar)</option>
+                        <option value="Right Side Mirror">Right Side Mirror Zone</option>
+                        <option value="Rear Wide Zone">Rear Wide Danger Zone</option>
                     </select>
 
                     <label for="confRange">Confidence Threshold: <span id="confVal">0.50</span></label>
@@ -242,7 +249,7 @@ def index():
                 formData.append('preset', document.getElementById('presetSelect').value);
 
                 const container = document.getElementById('previewContainer');
-                container.innerHTML = '<span style="color:#58a6ff;">Processing frame with YOLOv8...</span>';
+                container.innerHTML = '<span style="color:#58a6ff;">Processing frame with ONNX YOLOv8...</span>';
 
                 try {
                     const res = await fetch('/api/detect', {
