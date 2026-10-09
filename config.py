@@ -12,10 +12,13 @@ ASSETS_DIR = BASE_DIR / "assets"
 SOUNDS_DIR = ASSETS_DIR / "sounds"
 HARDWARE_DIR = BASE_DIR / "hardware"
 
-# Ensure required directories exist
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
-SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
-HARDWARE_DIR.mkdir(parents=True, exist_ok=True)
+# Ensure required directories exist (with read-only filesystem safety for Vercel Serverless)
+try:
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
+    HARDWARE_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 
 # Model Settings
 DEFAULT_MODEL_NAME = "yolov8n.pt"

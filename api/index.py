@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from danger_zone import DangerZone
-from utils.drawing import draw_danger_zones, draw_detections, draw_telemetry_hud
+from utils.drawing import draw_detections, draw_hud_banner
 
 # Import ONNX detector first for lightweight Vercel serverless footprint
 try:
@@ -71,13 +71,13 @@ async def detect_pedestrians(
         det = get_detector()
         det.set_confidence(confidence)
 
-        polygon = dz.get_pixel_polygon(frame.shape)
         detections, is_danger = det.detect(frame, dz)
+        danger_count = sum(1 for d in detections if d.get("is_in_danger", False))
 
         # Draw overlays
-        annotated_frame = draw_danger_zones(frame.copy(), polygon, is_danger)
+        annotated_frame = dz.draw(frame.copy(), is_danger)
         annotated_frame = draw_detections(annotated_frame, detections)
-        annotated_frame = draw_telemetry_hud(annotated_frame, len(detections), is_danger, 0.0, 15.0, "VERCEL_SERVERLESS")
+        annotated_frame = draw_hud_banner(annotated_frame, is_danger, len(detections), danger_count, 15.0)
 
         # Encode image to base64
         _, buffer = cv2.imencode('.jpg', annotated_frame)
@@ -86,6 +86,7 @@ async def detect_pedestrians(
         return {
             "is_danger": is_danger,
             "detection_count": len(detections),
+            "danger_count": danger_count,
             "detections": detections,
             "preset": preset,
             "confidence_threshold": confidence,
@@ -212,8 +213,8 @@ def index():
                     <label for="presetSelect">Blind Zone Preset</label>
                     <select id="presetSelect">
                         <option value="Front Blind Spot">Front Blind Spot (A-Pillar)</option>
-                        <option value="Right Side Mirror">Right Side Mirror Zone</option>
-                        <option value="Rear Wide Zone">Rear Wide Danger Zone</option>
+                        <option value="Side Mirror Blind Spot">Right Side Mirror Zone</option>
+                        <option value="Rear Danger Zone">Rear Wide Danger Zone</option>
                     </select>
 
                     <label for="confRange">Confidence Threshold: <span id="confVal">0.50</span></label>
